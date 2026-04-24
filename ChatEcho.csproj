@@ -1,0 +1,25 @@
+<Project Sdk="Dalamud.NET.Sdk/14.0.1">
+
+  <PropertyGroup>
+    <Name>Chat Echo</Name>
+    <Author>Leonhart</Author>
+    <InternalName>ChatEcho</InternalName>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <Description>Echoes Party and Raid chat as a draggable HUD overlay so you never miss a callout while tunnel-visioning in raids. Supports priority word highlighting, fade animations, and full color customization.</Description>
+    <Punchline>Never miss a party or raid callout again.</Punchline>
+    <DalamudApiLevel>14</DalamudApiLevel>
+    <RepoUrl>https://github.com/BalthierArt/EchoChat</RepoUrl>
+    <Tags>chat;party;raid;overlay;hud;echo</Tags>
+    <CategoryTags>UI</CategoryTags>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

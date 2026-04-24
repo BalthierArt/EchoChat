@@ -1,0 +1,19 @@
+# Build outputs
+bin/
+obj/
+
+# IDE folders
+.vs/
+.idea/
+*.user
+*.suo
+*.DotSettings.user
+_ReSharper*/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Local scripts — not needed on GitHub
+push_update.bat
+setup_github.bat
