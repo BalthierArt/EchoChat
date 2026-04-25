@@ -1,0 +1,119 @@
+name: Build and publish ChatEcho
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+env:
+  INTERNAL_NAME: ChatEcho
+  RELEASE_TAG: release
+  PACKAGE_NAME: ChatEcho.zip
+
+jobs:
+  release:
+    name: Build release package
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore
+        run: dotnet restore ChatEcho.csproj --configfile nuget.config
+
+      - name: Build
+        run: dotnet build ChatEcho.csproj --configuration Release --no-restore
+
+      - name: Create Dalamud install zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $existingPackage = Get-ChildItem -Path bin -Recurse -Filter latest.zip |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+
+          if ($existingPackage) {
+            Copy-Item -LiteralPath $existingPackage.FullName -Destination $env:PACKAGE_NAME -Force
+          } else {
+            $outputDirectory = Get-ChildItem -Path bin\Release -Recurse -Directory |
+              Where-Object {
+                (Test-Path (Join-Path $_.FullName "$env:INTERNAL_NAME.dll")) -and
+                (Test-Path (Join-Path $_.FullName "$env:INTERNAL_NAME.json"))
+              } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+
+            if (-not $outputDirectory) {
+              throw "Could not find a build output directory containing $env:INTERNAL_NAME.dll and $env:INTERNAL_NAME.json."
+            }
+
+            $packageDirectory = Join-Path $PWD 'package'
+            New-Item -ItemType Directory -Path $packageDirectory -Force | Out-Null
+
+            foreach ($fileName in @("$env:INTERNAL_NAME.dll", "$env:INTERNAL_NAME.json", "$env:INTERNAL_NAME.deps.json", 'icon.png')) {
+              $sourcePath = Join-Path $outputDirectory.FullName $fileName
+              if (Test-Path $sourcePath) {
+                Copy-Item -LiteralPath $sourcePath -Destination $packageDirectory -Force
+              }
+            }
+
+            Compress-Archive -Path (Join-Path $packageDirectory '*') -DestinationPath $env:PACKAGE_NAME -Force
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Join-Path $PWD $env:PACKAGE_NAME))
+          try {
+            $entries = $zip.Entries | ForEach-Object { $_.FullName }
+          } finally {
+            $zip.Dispose()
+          }
+
+          if ($entries -notcontains "$env:INTERNAL_NAME.dll") {
+            throw "$env:PACKAGE_NAME must contain $env:INTERNAL_NAME.dll at the zip root."
+          }
+
+          if ($entries -notcontains "$env:INTERNAL_NAME.json") {
+            throw "$env:PACKAGE_NAME must contain $env:INTERNAL_NAME.json at the zip root."
+          }
+
+          if ($entries -contains "$env:INTERNAL_NAME/$env:INTERNAL_NAME.dll") {
+            throw "$env:PACKAGE_NAME contains a nested plugin folder. Dalamud install zips need plugin files at the root."
+          }
+
+          $entries
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatEcho
+          path: ChatEcho.zip
+
+      - name: Publish GitHub release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          git tag --force $env:RELEASE_TAG $env:GITHUB_SHA
+          git push origin "refs/tags/$env:RELEASE_TAG" --force
+
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG --title $env:RELEASE_TAG --notes "Automated ChatEcho plugin build."
+          }
+
+          gh release upload $env:RELEASE_TAG $env:PACKAGE_NAME --clobber
