@@ -28,7 +28,19 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: 10.0.x
+
+      - name: Download Dalamud
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          Invoke-WebRequest -Uri 'https://goatcorp.github.io/dalamud-distrib/latest.zip' -OutFile dalamud.zip
+          Expand-Archive -Path dalamud.zip -DestinationPath dalamud -Force
+
+          $dalamudHome = (Resolve-Path dalamud).Path
+          "DALAMUD_HOME=$dalamudHome" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "Dalamud downloaded to $dalamudHome"
 
       - name: Restore
         run: dotnet restore ChatEcho.csproj --configfile nuget.config
