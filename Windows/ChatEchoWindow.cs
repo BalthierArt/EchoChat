@@ -3,17 +3,30 @@ using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Text;
+using Dalamud.Interface.Windowing;
 
 namespace ChatEcho.Windows;
 
-public sealed class ChatEchoWindow
+public sealed class ChatEchoWindow : Window
 {
     private readonly Plugin plugin;
     private readonly List<ChatMessage> messages = new();
     private readonly object messageLock = new();
     private ChatMessage? lastExpiredMessage;
+    private bool hasMessages;
+    private bool showFaded;
+    private bool shouldDraw;
 
-    public ChatEchoWindow(Plugin plugin) => this.plugin = plugin;
+    public ChatEchoWindow(Plugin plugin)
+        : base("Chat Echo  --  Drag title bar, then Lock###ChatEchoOverlay")
+    {
+        this.plugin = plugin;
+        IsOpen = true;
+        ShowCloseButton = false;
+        RespectCloseHotkey = false;
+        DisableWindowSounds = true;
+        DisableFadeInFadeOut = true;
+    }
 
     public void AddMessage(XivChatType type, string sender, string text)
     {
@@ -146,11 +159,10 @@ public sealed class ChatEchoWindow
     // Drag debounce — only save position when mouse is released
     private bool  dragging      = false;
 
-    public void Draw()
+    public override void PreDraw()
     {
         var cfg = plugin.Configuration;
 
-        bool hasMessages;
         lock (messageLock)
         {
             // Single-pass expiry — no LINQ allocation every frame
@@ -168,66 +180,60 @@ public sealed class ChatEchoWindow
             hasMessages = messages.Count > 0;
         }
 
-        bool showFaded = cfg.ShowLastFaded
+        showFaded = cfg.ShowLastFaded
             && !hasMessages
             && lastExpiredMessage != null
             && (DateTime.Now - lastExpiredMessage.AddedAt).TotalSeconds < cfg.DisplayDuration * 2.0;
 
-        if (cfg.Locked && !hasMessages && !showFaded) return;
+        shouldDraw = !cfg.Locked || hasMessages || showFaded;
+        IsOpen = true;
+        Position = cfg.BannerPosition;
+        PositionCondition = cfg.Locked ? ImGuiCond.Always : ImGuiCond.FirstUseEver;
+        BgAlpha = cfg.Locked ? cfg.BackgroundOpacity : 0.7f;
 
-        if (cfg.Locked) DrawLocked(cfg, hasMessages, showFaded);
-        else            DrawUnlocked(cfg, hasMessages, showFaded);
-    }
+        Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar
+              | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoSavedSettings
+              | ImGuiWindowFlags.NoCollapse;
 
-    private void DrawLocked(Configuration cfg, bool hasMessages, bool showFaded)
-    {
-        var flags = ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove
-                  | ImGuiWindowFlags.NoInputs   | ImGuiWindowFlags.NoScrollbar
-                  | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.AlwaysAutoResize
-                  | ImGuiWindowFlags.NoSavedSettings   | ImGuiWindowFlags.NoCollapse;
-
-        ImGui.SetNextWindowBgAlpha(cfg.BackgroundOpacity);
-        ImGui.SetNextWindowPos(cfg.BannerPosition, ImGuiCond.Always);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(cfg.BackgroundPadding, cfg.BackgroundPadding));
-        if (!ImGui.Begin("##ChatEchoLocked", flags)) { ImGui.PopStyleVar(); ImGui.End(); return; }
-        ImGui.PopStyleVar();
-        DrawContent(cfg, hasMessages, showFaded);
-        ImGui.SetWindowFontScale(1f);
-        ImGui.End();
-    }
-
-    private void DrawUnlocked(Configuration cfg, bool hasMessages, bool showFaded)
-    {
-        var flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar
-                  | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoSavedSettings
-                  | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoFocusOnAppearing;
-
-        ImGui.SetNextWindowBgAlpha(0.7f);
-        ImGui.SetNextWindowPos(cfg.BannerPosition, ImGuiCond.FirstUseEver);
-        float winW = Math.Max(380f, cfg.FontSize * 14f);
-        float winH = Math.Max(90f,  cfg.FontSize * 2.8f);
-        ImGui.SetNextWindowSize(new Vector2(winW, winH), ImGuiCond.Always);
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(cfg.BackgroundPadding, cfg.BackgroundPadding));
-        if (!ImGui.Begin("Chat Echo  --  Drag title bar, then Lock##echo", flags))
-        { ImGui.PopStyleVar(); ImGui.End(); return; }
-        ImGui.PopStyleVar();
-
-        var pos = ImGui.GetWindowPos();
-        if (pos != cfg.BannerPosition)
+        if (cfg.Locked)
         {
-            cfg.BannerPosition = pos;
-            dragging = true;
+            Flags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoMove
+                   | ImGuiWindowFlags.NoInputs | ImGuiWindowFlags.AlwaysAutoResize;
+            Size = null;
         }
-        // Only write to disk when drag ends (mouse released) — not 60x per second
-        if (dragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+        else
         {
-            cfg.Save();
-            dragging = false;
+            Flags |= ImGuiWindowFlags.NoFocusOnAppearing;
+            Size = new Vector2(Math.Max(380f, cfg.FontSize * 14f), Math.Max(90f, cfg.FontSize * 2.8f));
+            SizeCondition = ImGuiCond.Always;
+        }
+    }
+
+    public override bool DrawConditions() => shouldDraw;
+
+    public override void Draw()
+    {
+        var cfg = plugin.Configuration;
+
+        if (!cfg.Locked)
+        {
+            var pos = ImGui.GetWindowPos();
+            if (pos != cfg.BannerPosition)
+            {
+                cfg.BannerPosition = pos;
+                dragging = true;
+            }
+
+            // Only write to disk when drag ends (mouse released) — not 60x per second
+            if (dragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
+            {
+                cfg.Save();
+                dragging = false;
+            }
         }
 
         DrawContent(cfg, hasMessages, showFaded);
         ImGui.SetWindowFontScale(1f);
-        ImGui.End();
     }
 
     private void DrawContent(Configuration cfg, bool hasMessages, bool showFaded)

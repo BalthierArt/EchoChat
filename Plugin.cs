@@ -39,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
         ConfigWindow = new ConfigWindow(this);
         EchoWindow   = new ChatEchoWindow(this);
         WindowSystem.AddWindow(ConfigWindow);
+        WindowSystem.AddWindow(EchoWindow);
 
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -72,7 +73,7 @@ public sealed class Plugin : IDalamudPlugin
         EchoWindow.AddMessage(type, sender.TextValue, message.TextValue);
     }
 
-    private void DrawUi()       { WindowSystem.Draw(); EchoWindow.Draw(); }
+    private void DrawUi()       => WindowSystem.Draw();
     private void OpenConfigUi() => ConfigWindow.IsOpen = true;
 
     private void OnCommand(string command, string args)
