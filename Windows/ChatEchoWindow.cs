@@ -16,6 +16,7 @@ public sealed class ChatEchoWindow : Window
     private bool hasMessages;
     private bool showFaded;
     private bool shouldDraw;
+    private bool stylePushed;
 
     public ChatEchoWindow(Plugin plugin)
         : base("Chat Echo  --  Drag title bar, then Lock###ChatEchoOverlay")
@@ -207,6 +208,12 @@ public sealed class ChatEchoWindow : Window
             Size = new Vector2(Math.Max(380f, cfg.FontSize * 14f), Math.Max(90f, cfg.FontSize * 2.8f));
             SizeCondition = ImGuiCond.Always;
         }
+
+        if (shouldDraw)
+        {
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(cfg.BackgroundPadding, cfg.BackgroundPadding));
+            stylePushed = true;
+        }
     }
 
     public override bool DrawConditions() => shouldDraw;
@@ -234,6 +241,14 @@ public sealed class ChatEchoWindow : Window
 
         DrawContent(cfg, hasMessages, showFaded);
         ImGui.SetWindowFontScale(1f);
+    }
+
+    public override void PostDraw()
+    {
+        if (!stylePushed) return;
+
+        ImGui.PopStyleVar();
+        stylePushed = false;
     }
 
     private void DrawContent(Configuration cfg, bool hasMessages, bool showFaded)
