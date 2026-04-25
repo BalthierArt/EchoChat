@@ -80,6 +80,11 @@ Three modes to suit your preference:
 
 ---
 
+REPO-
+https://raw.githubusercontent.com/BalthierArt/Leonhart/main/repo.json
+
+
+---
 ## License
 
 MIT — do whatever you like with it, credit appreciated but not required.
