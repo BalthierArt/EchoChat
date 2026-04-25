@@ -4,7 +4,7 @@
   "Punchline": "Never miss a party or raid callout again.",
   "Description": "Echoes Party and Raid chat as a draggable HUD overlay so you never miss a callout while tunnel-visioning in raids. Supports priority word highlighting, fade animations, and full color customization.",
   "InternalName": "ChatEcho",
-  "AssemblyVersion": "1.0.0.0",
+  "AssemblyVersion": "1.0.0.1",
   "RepoUrl": "https://github.com/BalthierArt/EchoChat",
   "ApplicableVersion": "any",
   "Tags": ["chat", "party", "raid", "overlay", "hud", "echo"],
