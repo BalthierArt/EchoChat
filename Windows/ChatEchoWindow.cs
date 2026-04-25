@@ -160,7 +160,12 @@ public sealed class ChatEchoWindow : Window
     // Drag debounce — only save position when mouse is released
     private bool  dragging      = false;
 
-    public override void PreDraw()
+    public override void PreOpenCheck()
+    {
+        IsOpen = true;
+    }
+
+    public override void Update()
     {
         var cfg = plugin.Configuration;
 
@@ -187,7 +192,6 @@ public sealed class ChatEchoWindow : Window
             && (DateTime.Now - lastExpiredMessage.AddedAt).TotalSeconds < cfg.DisplayDuration * 2.0;
 
         shouldDraw = !cfg.Locked || hasMessages || showFaded;
-        IsOpen = true;
         Position = cfg.BannerPosition;
         PositionCondition = cfg.Locked ? ImGuiCond.Always : ImGuiCond.FirstUseEver;
         BgAlpha = cfg.Locked ? cfg.BackgroundOpacity : 0.7f;
@@ -208,7 +212,11 @@ public sealed class ChatEchoWindow : Window
             Size = new Vector2(Math.Max(380f, cfg.FontSize * 14f), Math.Max(90f, cfg.FontSize * 2.8f));
             SizeCondition = ImGuiCond.Always;
         }
+    }
 
+    public override void PreDraw()
+    {
+        var cfg = plugin.Configuration;
         if (shouldDraw)
         {
             ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(cfg.BackgroundPadding, cfg.BackgroundPadding));
