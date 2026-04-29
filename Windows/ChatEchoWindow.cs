@@ -33,7 +33,6 @@ public sealed class ChatEchoWindow : Window
     {
         var cfg = plugin.Configuration;
 
-        // If Priority Only mode is on, drop messages with no keyword match
         if (cfg.PriorityOnly && cfg.EnablePriority && cfg.PriorityWords.Count > 0)
         {
             if (!ContainsPriorityWord(text, cfg.PriorityWords))
@@ -48,7 +47,6 @@ public sealed class ChatEchoWindow : Window
         }
     }
 
-    /// <summary>Returns true if the text contains at least one priority keyword at a word boundary.</summary>
     private static bool ContainsPriorityWord(string text, System.Collections.Generic.List<string> kws)
     {
         foreach (var kw in kws)
@@ -104,7 +102,6 @@ public sealed class ChatEchoWindow : Window
                     int i = rem.IndexOf(kw, searchFrom, StringComparison.OrdinalIgnoreCase);
                     if (i < 0) break;
 
-                    // Whole-word check: chars before and after must be boundaries
                     bool before = IsBoundary(rem, i - 1);
                     bool after  = IsBoundary(rem, i + kw.Length);
 
@@ -113,7 +110,7 @@ public sealed class ChatEchoWindow : Window
                         if (bestIdx < 0 || i < bestIdx) { bestIdx = i; bestKw = kw; }
                         break;
                     }
-                    searchFrom = i + 1; // skip past this non-boundary match and keep looking
+                    searchFrom = i + 1;
                 }
             }
 
@@ -153,11 +150,9 @@ public sealed class ChatEchoWindow : Window
         x += ImGui.CalcTextSize(text).X;
     }
 
-    // Cached line height — recalculated only when font size changes
     private float cachedLineH   = 0f;
     private float cachedFontSz  = 0f;
 
-    // Drag debounce — only save position when mouse is released
     private bool  dragging      = false;
 
     public override void PreOpenCheck()
@@ -171,7 +166,6 @@ public sealed class ChatEchoWindow : Window
 
         lock (messageLock)
         {
-            // Single-pass expiry — no LINQ allocation every frame
             ChatMessage? lastExp = null;
             for (int i = messages.Count - 1; i >= 0; i--)
             {
@@ -239,7 +233,6 @@ public sealed class ChatEchoWindow : Window
                 dragging = true;
             }
 
-            // Only write to disk when drag ends (mouse released) — not 60x per second
             if (dragging && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
             {
                 cfg.Save();
@@ -294,7 +287,6 @@ public sealed class ChatEchoWindow : Window
 
     private void RenderMessage(ChatMessage msg, Configuration cfg, float alpha)
     {
-        // O(1) def lookup via pre-built dictionary — no linear scan
         var key = ChannelDefs.KeyFor(msg.Type);
         var def = key != null ? ChannelDefs.ByKey(key) : null;
         var ch  = key != null ? cfg.Get(key, def?.DefaultColor ?? new Vector4(1,1,1,1)) : null;
@@ -306,8 +298,20 @@ public sealed class ChatEchoWindow : Window
                 nameColor = msgColor = cfg.SolidColor;
                 break;
             case ColorMode.Split:
-                nameColor = ch?.NameColor ?? new Vector4(1,1,1,1);
-                msgColor  = ch?.MsgColor  ?? new Vector4(1,1,1,1);
+                if (IsGameLogEffect(msg.Type))
+                {
+                    nameColor = ch?.NameColor ?? new Vector4(1,1,1,1);
+                    msgColor  = ch?.MsgColor ?? new Vector4(1,1,1,1);
+                }
+                else if (def?.HasSender == false)
+                {
+                    nameColor = msgColor = ch?.Color ?? new Vector4(1,1,1,1);
+                }
+                else
+                {
+                    nameColor = ch?.NameColor ?? new Vector4(1,1,1,1);
+                    msgColor  = ch?.MsgColor  ?? new Vector4(1,1,1,1);
+                }
                 break;
             default:
                 nameColor = msgColor = ch?.Color ?? new Vector4(1,1,1,1);
@@ -315,16 +319,26 @@ public sealed class ChatEchoWindow : Window
         }
 
         string prefix  = cfg.ShowChannelPrefix && def != null ? $"({def.Label}) " : "";
-        string sender  = FormatSender(msg.Sender, cfg.FirstNameOnly);
+        bool   hasSender = def?.HasSender ?? true;
+        string sender  = hasSender ? FormatSender(msg.Sender, cfg.FirstNameOnly) : "";
         var    scrPos  = ImGui.GetCursorScreenPos();
         var    dl      = ImGui.GetWindowDrawList();
         var    font    = ImGui.GetFont();
         float  sz      = cfg.FontSize;
         float  x       = scrPos.X, y = scrPos.Y;
 
-        Seg(dl, font, sz, ref x, y, prefix + sender + ": ", nameColor, cfg, alpha);
+        if (hasSender && !string.IsNullOrWhiteSpace(sender))
+            Seg(dl, font, sz, ref x, y, prefix + sender + ": ", nameColor, cfg, alpha);
+        else if (!string.IsNullOrEmpty(prefix))
+            Seg(dl, font, sz, ref x, y, prefix, nameColor, cfg, alpha);
 
-        if (cfg.EnablePriority && cfg.PriorityWords.Count > 0)
+        if (cfg.ColorMode == ColorMode.Split && IsGameLogEffect(msg.Type) && TrySplitGameLogEffect(msg.Text, out var beforeEffect, out var effectName, out var afterEffect))
+        {
+            Seg(dl, font, sz, ref x, y, beforeEffect, msgColor, cfg, alpha);
+            Seg(dl, font, sz, ref x, y, effectName, nameColor, cfg, alpha);
+            Seg(dl, font, sz, ref x, y, afterEffect, msgColor, cfg, alpha);
+        }
+        else if (cfg.EnablePriority && cfg.PriorityWords.Count > 0)
         {
             foreach (var (seg, isPri) in Tokenize(msg.Text, cfg.PriorityWords))
                 Seg(dl, font, sz, ref x, y, seg, isPri ? cfg.PriorityColor : msgColor, cfg, alpha);
@@ -334,12 +348,44 @@ public sealed class ChatEchoWindow : Window
             Seg(dl, font, sz, ref x, y, msg.Text, msgColor, cfg, alpha);
         }
 
-        // Cache line height — only recalculate when font size changes
         if (Math.Abs(cachedFontSz - sz) > 0.01f)
         {
             cachedLineH  = ImGui.CalcTextSize("A").Y + 2f;
             cachedFontSz = sz;
         }
         ImGui.Dummy(new Vector2(Math.Max(x - scrPos.X, 10f), cachedLineH));
+    }
+
+    private static bool IsGameLogEffect(XivChatType type)
+    {
+        var id = (ushort)type;
+        return id >= 46 && id <= 49;
+    }
+
+    private static bool TrySplitGameLogEffect(string text, out string beforeEffect, out string effectName, out string afterEffect)
+    {
+        beforeEffect = text;
+        effectName = string.Empty;
+        afterEffect = string.Empty;
+
+        var effectIndex = text.IndexOf("effect of ", StringComparison.OrdinalIgnoreCase);
+        if (effectIndex < 0)
+            return false;
+
+        var nameStart = effectIndex + "effect of ".Length;
+        while (nameStart < text.Length && !char.IsLetterOrDigit(text[nameStart]))
+            nameStart++;
+
+        if (nameStart >= text.Length)
+            return false;
+
+        var nameEnd = text.IndexOf('.', nameStart);
+        if (nameEnd < 0)
+            nameEnd = text.Length;
+
+        beforeEffect = text[..nameStart];
+        effectName = text[nameStart..nameEnd];
+        afterEffect = text[nameEnd..];
+        return !string.IsNullOrWhiteSpace(effectName);
     }
 }

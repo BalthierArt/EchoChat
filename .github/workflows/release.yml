@@ -35,7 +35,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          Invoke-WebRequest -Uri 'https://goatcorp.github.io/dalamud-distrib/latest.zip' -OutFile dalamud.zip
+          $versionInfo = Invoke-RestMethod -Uri 'https://kamori.goats.dev/Dalamud/Release/VersionInfo?track=staging'
+          Invoke-WebRequest -Uri $versionInfo.downloadUrl -OutFile dalamud.zip
           Expand-Archive -Path dalamud.zip -DestinationPath dalamud -Force
 
           $dalamudHome = (Resolve-Path dalamud).Path

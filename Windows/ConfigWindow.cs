@@ -10,14 +10,13 @@ public sealed class ConfigWindow : Window
     private readonly Plugin plugin;
     private string newPriorityWord = string.Empty;
 
-    // Section labels for Channels tab
-    // Indices into ChannelDefs.All — update if channels are added/removed
     private static readonly (int from, int to, string label)[] Sections =
     {
-        (0,  2,  "Combat / Raid"),   // party, alliance, pvpteam
-        (3,  8,  "Social"),          // say, shout, yell, tell, fc, novice
-        (9,  10, "Linkshells"),      // ls, cls
-        (11, 14, "System"),          // echo, system, notice, urgent
+        (0,  2,  "Combat / Raid"),
+        (3,  9,  "Social"),
+        (10, 11, "Linkshells"),
+        (12, 15, "System"),
+        (16, 19, "Game Log"),
     };
 
     public ConfigWindow(Plugin plugin) : base("Chat Echo — Settings")
@@ -31,7 +30,6 @@ public sealed class ConfigWindow : Window
         Size = new Vector2(560, 600);
     }
 
-    // CE4: color picker without needing ref on a property
     private static bool CE4(string label, Vector4 cur, out Vector4 result)
     {
         var c = cur;
@@ -44,7 +42,6 @@ public sealed class ConfigWindow : Window
     {
         var cfg = plugin.Configuration;
 
-        // Master toggle
         var en = cfg.Enabled;
         if (ImGui.Checkbox("##en", ref en)) { cfg.Enabled = en; cfg.Save(); }
         ImGui.SameLine();
@@ -81,8 +78,6 @@ public sealed class ConfigWindow : Window
         ImGui.EndTabBar();
     }
 
-    // ── General ──────────────────────────────────────────────────────
-
     private void DrawGeneralTab(Configuration cfg)
     {
         if (!ImGui.BeginTabItem("General")) return;
@@ -112,7 +107,6 @@ public sealed class ConfigWindow : Window
 
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
 
-        // Lock position here in General so it's always easy to find
         var locked = cfg.Locked;
         if (ImGui.Checkbox("Lock banner position (click-through)", ref locked))
         { cfg.Locked = locked; cfg.Save(); }
@@ -137,8 +131,6 @@ public sealed class ConfigWindow : Window
 
         ImGui.EndTabItem();
     }
-
-    // ── Display ──────────────────────────────────────────────────────
 
     private static void DrawDisplayTab(Configuration cfg)
     {
@@ -191,14 +183,11 @@ public sealed class ConfigWindow : Window
         ImGui.EndTabItem();
     }
 
-    // ── Channels ─────────────────────────────────────────────────────
-
     private static void DrawChannelsTab(Configuration cfg)
     {
         if (!ImGui.BeginTabItem("Channels")) return;
         ImGui.Spacing();
 
-        // Color mode selector
         ImGui.Text("Color Mode:");
         ImGui.SameLine();
         int cm = (int)cfg.ColorMode;
@@ -212,7 +201,6 @@ public sealed class ConfigWindow : Window
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("One global color for all text.");
         if (cmc) { cfg.ColorMode = (ColorMode)cm; cfg.Save(); }
 
-        // Solid color picker shown inline when Solid is selected
         if (cfg.ColorMode == ColorMode.Solid)
         {
             ImGui.Spacing();
@@ -248,7 +236,6 @@ public sealed class ConfigWindow : Window
 
                 if (cfg.ColorMode == ColorMode.PerChannel)
                 {
-                    // En  [Color]  R  Channel Label
                     if (CE4($"##{def.Key}col", ch.Color, out var c)) { ch.Color = c; cfg.Save(); }
                     ImGui.SameLine();
                     if (ImGui.SmallButton($"R##{def.Key}cr")) { ch.Color = def.DefaultColor; cfg.Save(); }
@@ -257,12 +244,11 @@ public sealed class ConfigWindow : Window
                 }
                 else if (cfg.ColorMode == ColorMode.Split)
                 {
-                    if (def.HasSender)
+                    if (def.HasSender || IsGameLogEffect(def))
                     {
-                        // En  Channel:  Name [Color]  Message [Color]  R
                         ImGui.Text($"{def.Label}:");
                         ImGui.SameLine();
-                        ImGui.TextDisabled("Name");
+                        ImGui.TextDisabled(def.HasSender ? "Name" : "Effect");
                         ImGui.SameLine();
                         if (CE4($"##n{def.Key}", ch.NameColor, out var nc)) { ch.NameColor = nc; cfg.Save(); }
                         ImGui.SameLine();
@@ -279,7 +265,6 @@ public sealed class ConfigWindow : Window
                     }
                     else
                     {
-                        // No sender name — just one color picker like Per-channel mode
                         if (CE4($"##{def.Key}col", ch.Color, out var c)) { ch.Color = c; cfg.Save(); }
                         ImGui.SameLine();
                         if (ImGui.SmallButton($"R##{def.Key}cr")) { ch.Color = def.DefaultColor; cfg.Save(); }
@@ -287,25 +272,38 @@ public sealed class ConfigWindow : Window
                         ImGui.Text(def.Label);
                     }
                 }
-                else // Solid
+                else
                 {
                     ImGui.Text(def.Label);
                 }
             }
+
+            if (label == "Game Log")
+            {
+                ImGui.Text("Effects:");
+                ImGui.SameLine();
+                int ges = (int)cfg.GameLogEffectScope;
+                bool gesc = ImGui.RadioButton("Only me##ges", ref ges, 0);
+                ImGui.SameLine();
+                gesc |= ImGui.RadioButton("All##ges", ref ges, 1);
+                if (gesc) { cfg.GameLogEffectScope = (GameLogEffectScope)ges; cfg.Save(); }
+                ImGui.TextDisabled("Choose whether effect messages show only yours or everyone nearby.");
+            }
+
             ImGui.Spacing();
         }
 
         ImGui.EndTabItem();
     }
 
-    // ── Priority ─────────────────────────────────────────────────────
+    private static bool IsGameLogEffect(ChannelDefs.Def def)
+        => def.Types.Length == 1 && (ushort)def.Types[0] is >= 46 and <= 49;
 
     private void DrawPriorityTab(Configuration cfg)
     {
         if (!ImGui.BeginTabItem("Priority")) return;
         ImGui.Spacing();
 
-        // ── Highlight toggle ─────────────────────────────────────────
         var en = cfg.EnablePriority;
         if (ImGui.Checkbox("Enable priority highlighting", ref en)) { cfg.EnablePriority = en; cfg.Save(); }
         if (ImGui.IsItemHovered())
@@ -326,7 +324,6 @@ public sealed class ConfigWindow : Window
 
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
 
-        // ── Priority Only toggle ─────────────────────────────────────
         var po = cfg.PriorityOnly;
         if (ImGui.Checkbox("Priority Only Messages", ref po)) { cfg.PriorityOnly = po; cfg.Save(); }
         if (ImGui.IsItemHovered())
@@ -344,7 +341,6 @@ public sealed class ConfigWindow : Window
 
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
 
-        // ── Word list ────────────────────────────────────────────────
         ImGui.TextDisabled("Add a word or phrase and click Add.");
         ImGui.TextDisabled("Matching is case-insensitive, whole-word only.");
         ImGui.Spacing();
@@ -361,12 +357,10 @@ public sealed class ConfigWindow : Window
 
         ImGui.Spacing();
 
-        // Narrower child with padding and slightly offset background color
         ImGui.PushStyleColor(ImGuiCol.ChildBg, new Vector4(0.18f, 0.18f, 0.24f, 1f));
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(8f, 6f));
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing,   new Vector2(8f, 6f));
 
-        // Use 75% of available width so it doesn't stretch edge to edge
         float listW = ImGui.GetContentRegionAvail().X * 0.75f;
         if (ImGui.BeginChild("##wl", new Vector2(listW, 200), true))
         {

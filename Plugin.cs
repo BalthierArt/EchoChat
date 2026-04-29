@@ -1,5 +1,9 @@
+using System;
 using ChatEcho.Windows;
 using Dalamud.Game.Command;
+#if DALAMUD_API_15
+using Dalamud.Game.Chat;
+#endif
 using Dalamud.Game.Text;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Windowing;
@@ -14,6 +18,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IChatGui                chatGui;
     private readonly ICommandManager         commandManager;
     private readonly IPluginLog              log;
+    private readonly IPlayerState            playerState;
 
     private const string CommandName = "/chatecho";
     public readonly WindowSystem WindowSystem = new("ChatEcho");
@@ -26,12 +31,14 @@ public sealed class Plugin : IDalamudPlugin
         IDalamudPluginInterface pluginInterface,
         IChatGui                chatGui,
         ICommandManager         commandManager,
-        IPluginLog              log)
+        IPluginLog              log,
+        IPlayerState            playerState)
     {
         this.pluginInterface = pluginInterface;
         this.chatGui         = chatGui;
         this.commandManager  = commandManager;
         this.log             = log;
+        this.playerState     = playerState;
 
         Configuration = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         Configuration.Initialize(pluginInterface);
@@ -54,6 +61,14 @@ public sealed class Plugin : IDalamudPlugin
         log.Information("Chat Echo loaded.");
     }
 
+#if DALAMUD_API_15
+    private void OnChatMessage(IHandleableChatMessage message)
+    {
+        if (!Configuration.Enabled) return;
+
+        AddEchoMessage(message.LogKind, message.Sender.TextValue, message.Message.TextValue);
+    }
+#else
     private void OnChatMessage(
         XivChatType  type,
         int          timestamp,
@@ -63,6 +78,17 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (!Configuration.Enabled) return;
 
+        AddEchoMessage(type, sender.TextValue, message.TextValue);
+    }
+#endif
+
+    private void AddEchoMessage(XivChatType type, string sender, string message)
+    {
+        if (Configuration.GameLogEffectScope == GameLogEffectScope.OnlyUser
+            && IsGameLogEffect(type)
+            && !IsLocalPlayerEffect(sender, message))
+            return;
+
         var key = ChannelDefs.KeyFor(type);
         if (key == null) return;
 
@@ -70,7 +96,63 @@ public sealed class Plugin : IDalamudPlugin
         var ch  = Configuration.Get(key, def?.DefaultColor ?? new System.Numerics.Vector4(1,1,1,1));
         if (!ch.Enabled) return;
 
-        EchoWindow.AddMessage(type, sender.TextValue, message.TextValue);
+        if (IsGameLogEffect(type))
+            message = TrimLeadingGameLogMarker(message);
+
+        EchoWindow.AddMessage(type, sender, message);
+    }
+
+    private static bool IsGameLogEffect(XivChatType type)
+    {
+        var id = (ushort)type;
+        return id >= 46 && id <= 49;
+    }
+
+    private bool IsLocalPlayerEffect(string sender, string message)
+    {
+        return ContainsStandaloneYou(TrimLeadingGameLogMarker(message));
+    }
+
+    private static bool ContainsStandaloneYou(string message)
+    {
+        const string needle = "You";
+        var index = message.IndexOf(needle, StringComparison.OrdinalIgnoreCase);
+        while (index >= 0)
+        {
+            var before = index == 0 || !char.IsLetterOrDigit(message[index - 1]);
+            var afterIndex = index + needle.Length;
+            var after = afterIndex >= message.Length || !char.IsLetterOrDigit(message[afterIndex]);
+            if (before && after)
+                return true;
+
+            index = message.IndexOf(needle, index + 1, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private static string TrimLeadingGameLogMarker(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return message;
+
+        var trimmed = message.TrimStart();
+        const string effectMarker = "effect of ";
+        var effectIndex = trimmed.IndexOf(effectMarker, StringComparison.OrdinalIgnoreCase);
+        if (effectIndex >= 0)
+        {
+            var markerStart = effectIndex + effectMarker.Length;
+            while (markerStart < trimmed.Length && char.IsWhiteSpace(trimmed[markerStart]))
+                markerStart++;
+
+            if (markerStart < trimmed.Length && !char.IsLetterOrDigit(trimmed[markerStart]))
+                return trimmed.Remove(markerStart, 1).TrimStart();
+        }
+
+        if (trimmed.Length <= 1 || char.IsLetterOrDigit(trimmed[0]))
+            return trimmed;
+
+        return trimmed[1..].TrimStart();
     }
 
     private void DrawUi()       => WindowSystem.Draw();
@@ -91,7 +173,6 @@ public sealed class Plugin : IDalamudPlugin
 
     public void RunTestMessages()
     {
-        // Cancel any already-running test sequence
         testCts?.Cancel();
         testCts = new System.Threading.CancellationTokenSource();
         var token = testCts.Token;
