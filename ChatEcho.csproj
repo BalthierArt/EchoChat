@@ -12,6 +12,7 @@
     <DalamudApiLevel>15</DalamudApiLevel>
     <DefineConstants>$(DefineConstants);DALAMUD_API_$(DalamudApiLevel)</DefineConstants>
     <RepoUrl>https://github.com/BalthierArt/EchoChat</RepoUrl>
+    <IconUrl>https://raw.githubusercontent.com/BalthierArt/EchoChat/main/icon.png</IconUrl>
     <Tags>chat;party;raid;overlay;hud;echo</Tags>
     <CategoryTags>UI</CategoryTags>
     <Nullable>enable</Nullable>
