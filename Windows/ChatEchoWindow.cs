@@ -77,10 +77,6 @@ public sealed class ChatEchoWindow : Window
         return name;
     }
 
-    /// <summary>
-    /// Returns true if the character is a word boundary (space, punctuation, or string edge).
-    /// Used to prevent "out" matching inside "outside".
-    /// </summary>
     private static bool IsBoundary(string s, int idx)
     {
         if (idx < 0 || idx >= s.Length) return true;
