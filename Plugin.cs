@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using ChatEcho.Windows;
 using Dalamud.Game.Command;
 #if DALAMUD_API_15
@@ -9,6 +11,8 @@ using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using Dalamud.Utility;
+using WorldRow = Lumina.Excel.Sheets.World;
 
 namespace ChatEcho;
 
@@ -19,6 +23,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ICommandManager         commandManager;
     private readonly IPluginLog              log;
     private readonly IPlayerState            playerState;
+    private readonly IObjectTable            objectTable;
+    private readonly ITextureProvider        textureProvider;
+    private readonly ITargetManager          targetManager;
+    private readonly IDataManager            dataManager;
+    private readonly IPartyList              partyList;
+    private List<string>? worldNames;
 
     private const string CommandName = "/chatecho";
     public readonly WindowSystem WindowSystem = new("ChatEcho");
@@ -26,31 +36,47 @@ public sealed class Plugin : IDalamudPlugin
     public Configuration  Configuration { get; private set; }
     public ChatEchoWindow EchoWindow    { get; private set; }
     public ConfigWindow   ConfigWindow  { get; private set; }
+    public DebuffHelperWindow DebuffHelperWindow { get; private set; }
+    public CastHelperWindow CastHelperWindow { get; private set; }
 
     public Plugin(
         IDalamudPluginInterface pluginInterface,
         IChatGui                chatGui,
         ICommandManager         commandManager,
         IPluginLog              log,
-        IPlayerState            playerState)
+        IPlayerState            playerState,
+        IObjectTable            objectTable,
+        ITextureProvider        textureProvider,
+        ITargetManager          targetManager,
+        IDataManager            dataManager,
+        IPartyList              partyList)
     {
         this.pluginInterface = pluginInterface;
         this.chatGui         = chatGui;
         this.commandManager  = commandManager;
         this.log             = log;
         this.playerState     = playerState;
+        this.objectTable     = objectTable;
+        this.textureProvider = textureProvider;
+        this.targetManager   = targetManager;
+        this.dataManager     = dataManager;
+        this.partyList       = partyList;
 
         Configuration = pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         Configuration.Initialize(pluginInterface);
 
         ConfigWindow = new ConfigWindow(this);
         EchoWindow   = new ChatEchoWindow(this);
+        DebuffHelperWindow = new DebuffHelperWindow(this, objectTable, textureProvider, log);
+        CastHelperWindow = new CastHelperWindow(this, objectTable, targetManager, dataManager, textureProvider, log);
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(EchoWindow);
+        WindowSystem.AddWindow(DebuffHelperWindow);
+        WindowSystem.AddWindow(CastHelperWindow);
 
         commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open settings. Args: on | off | test"
+            HelpMessage = "Open settings. Args: on | off | test | boss"
         });
 
         pluginInterface.UiBuilder.Draw         += DrawUi;
@@ -64,9 +90,15 @@ public sealed class Plugin : IDalamudPlugin
 #if DALAMUD_API_15
     private void OnChatMessage(IHandleableChatMessage message)
     {
+        if (!Configuration.Enabled && !Configuration.CastHelperEnabled) return;
+
+        var formattedMessage = FormatSenderlessSystemMessage(message.LogKind, message.Message);
+        if (Configuration.CastHelperEnabled)
+            CastHelperWindow.OnChatMessage(message.LogKind, formattedMessage);
+
         if (!Configuration.Enabled) return;
 
-        AddEchoMessage(message.LogKind, message.Sender.TextValue, message.Message.TextValue);
+        AddEchoMessage(message.LogKind, message.Sender.TextValue, formattedMessage);
     }
 #else
     private void OnChatMessage(
@@ -76,17 +108,21 @@ public sealed class Plugin : IDalamudPlugin
         ref SeString message,
         ref bool     isHandled)
     {
+        if (!Configuration.Enabled && !Configuration.CastHelperEnabled) return;
+
+        var formattedMessage = FormatSenderlessSystemMessage(type, message);
+        if (Configuration.CastHelperEnabled)
+            CastHelperWindow.OnChatMessage(type, formattedMessage);
+
         if (!Configuration.Enabled) return;
 
-        AddEchoMessage(type, sender.TextValue, message.TextValue);
+        AddEchoMessage(type, sender.TextValue, formattedMessage);
     }
 #endif
 
     private void AddEchoMessage(XivChatType type, string sender, string message)
     {
-        if (Configuration.GameLogEffectScope == GameLogEffectScope.OnlyUser
-            && IsGameLogEffect(type)
-            && !IsLocalPlayerEffect(sender, message))
+        if (IsGameLogEffect(type) && !ShouldShowGameLogEffect(message))
             return;
 
         var key = ChannelDefs.KeyFor(type);
@@ -108,9 +144,77 @@ public sealed class Plugin : IDalamudPlugin
         return id >= 46 && id <= 49;
     }
 
-    private bool IsLocalPlayerEffect(string sender, string message)
+    private string FormatSenderlessSystemMessage(XivChatType type, SeString message)
     {
-        return ContainsStandaloneYou(TrimLeadingGameLogMarker(message));
+        var text = message.TextValue;
+        var key = ChannelDefs.KeyFor(type);
+        var def = key != null ? ChannelDefs.ByKey(key) : null;
+        if (def?.HasSender != false || !IsLikelyDeathNotice(text))
+            return text;
+
+        return InsertMissingWorldSeparator(text);
+    }
+
+    private static bool IsLikelyDeathNotice(string text)
+    {
+        return text.Contains("defeated", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("KO'd", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("knocked out", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("has fallen", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string InsertMissingWorldSeparator(string text)
+    {
+        foreach (var world in GetWorldNames())
+        {
+            var searchFrom = 1;
+            while (searchFrom < text.Length)
+            {
+                var index = text.IndexOf(world, searchFrom, StringComparison.Ordinal);
+                if (index < 1)
+                    break;
+
+                var before = text[index - 1];
+                var afterIndex = index + world.Length;
+                var after = afterIndex >= text.Length ? '\0' : text[afterIndex];
+                if (char.IsLetter(before) && (after == '\0' || char.IsWhiteSpace(after) || char.IsPunctuation(after)))
+                    return text[..index].TrimEnd() + " - " + text[index..];
+
+                searchFrom = index + 1;
+            }
+        }
+
+        return text;
+    }
+
+    private List<string> GetWorldNames()
+    {
+        if (worldNames != null)
+            return worldNames;
+
+        worldNames = dataManager.GetExcelSheet<WorldRow>()
+            .Select(row => row.Name.ExtractText())
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.Ordinal)
+            .OrderByDescending(name => name.Length)
+            .ToList();
+
+        return worldNames;
+    }
+
+    private bool ShouldShowGameLogEffect(string message)
+    {
+        if (Configuration.GameLogEffectScope == GameLogEffectScope.All)
+            return true;
+
+        var trimmed = TrimLeadingGameLogMarker(message);
+        if (ContainsStandaloneYou(trimmed))
+            return true;
+
+        if (Configuration.GameLogEffectScope == GameLogEffectScope.OnlyUser)
+            return false;
+
+        return IsPartyMemberEffect(trimmed);
     }
 
     private static bool ContainsStandaloneYou(string message)
@@ -126,6 +230,47 @@ public sealed class Plugin : IDalamudPlugin
                 return true;
 
             index = message.IndexOf(needle, index + 1, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
+    }
+
+    private bool IsPartyMemberEffect(string message)
+    {
+        var localName = objectTable.LocalPlayer?.Name.TextValue;
+        if (ContainsStandaloneName(message, localName))
+            return true;
+
+        for (var i = 0; i < partyList.Length; i++)
+        {
+            var member = partyList[i];
+            var memberName = member?.GameObject?.Name.TextValue;
+            if (string.IsNullOrWhiteSpace(memberName))
+                memberName = member?.Name.ToString();
+
+            if (ContainsStandaloneName(message, memberName))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool ContainsStandaloneName(string message, string? name)
+    {
+        if (string.IsNullOrWhiteSpace(message) || string.IsNullOrWhiteSpace(name))
+            return false;
+
+        name = name.Trim();
+        var index = message.IndexOf(name, StringComparison.OrdinalIgnoreCase);
+        while (index >= 0)
+        {
+            var before = index == 0 || !char.IsLetterOrDigit(message[index - 1]);
+            var afterIndex = index + name.Length;
+            var after = afterIndex >= message.Length || !char.IsLetterOrDigit(message[afterIndex]);
+            if (before && after)
+                return true;
+
+            index = message.IndexOf(name, index + 1, StringComparison.OrdinalIgnoreCase);
         }
 
         return false;
@@ -165,6 +310,11 @@ public sealed class Plugin : IDalamudPlugin
             case "on":   Configuration.Enabled = true;  Configuration.Save(); chatGui.Print("[Chat Echo] Enabled.");  break;
             case "off":  Configuration.Enabled = false; Configuration.Save(); chatGui.Print("[Chat Echo] Disabled."); break;
             case "test": RunTestMessages(); break;
+            case "boss":
+                Configuration.CastHelperEnabled = !Configuration.CastHelperEnabled;
+                Configuration.Save();
+                chatGui.Print(Configuration.CastHelperEnabled ? "[Chat Echo] Boss Helper enabled." : "[Chat Echo] Boss Helper disabled.");
+                break;
             default:     ConfigWindow.IsOpen = !ConfigWindow.IsOpen; break;
         }
     }
