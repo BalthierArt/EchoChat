@@ -9,6 +9,8 @@ namespace ChatEcho.Windows;
 
 public sealed class ChatEchoWindow : Window
 {
+    private readonly record struct RenderSegment(string Text, Vector4 Color, Vector4? Color2 = null);
+
     private readonly Plugin plugin;
     private readonly List<ChatMessage> messages = new();
     private readonly object messageLock = new();
@@ -75,10 +77,6 @@ public sealed class ChatEchoWindow : Window
         return name;
     }
 
-    /// <summary>
-    /// Returns true if the character is a word boundary (space, punctuation, or string edge).
-    /// Used to prevent "out" matching inside "outside".
-    /// </summary>
     private static bool IsBoundary(string s, int idx)
     {
         if (idx < 0 || idx >= s.Length) return true;
@@ -150,6 +148,46 @@ public sealed class ChatEchoWindow : Window
         x += ImGui.CalcTextSize(text).X;
     }
 
+    private static void SegGradient(ImDrawListPtr dl, ImFontPtr font, float sz,
+                                    ref float x, float y, string text,
+                                    Vector4 startColor, Vector4 endColor, Configuration cfg, float alpha)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+
+        var totalWidth = Math.Max(ImGui.CalcTextSize(text).X, 1f);
+        var origin = x;
+        foreach (var ch in text)
+        {
+            var s = ch.ToString();
+            var width = ImGui.CalcTextSize(s).X;
+            var t = Math.Clamp((x - origin) / totalWidth, 0f, 1f);
+            var color = Vector4.Lerp(startColor, endColor, t);
+            Seg(dl, font, sz, ref x, y, s, color, cfg, alpha);
+            if (width <= 0f)
+                x += ImGui.CalcTextSize(" ").X;
+        }
+    }
+
+    private static void SegGradientPart(ImDrawListPtr dl, ImFontPtr font, float sz,
+                                        ref float x, float y, string text,
+                                        Vector4 startColor, Vector4 endColor, Configuration cfg, float alpha,
+                                        float totalWidth, ref float drawnWidth)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+
+        foreach (var ch in text)
+        {
+            var s = ch.ToString();
+            var width = ImGui.CalcTextSize(s).X;
+            var t = Math.Clamp(drawnWidth / Math.Max(totalWidth, 1f), 0f, 1f);
+            var color = Vector4.Lerp(startColor, endColor, t);
+            Seg(dl, font, sz, ref x, y, s, color, cfg, alpha);
+            drawnWidth += width;
+            if (width <= 0f)
+                drawnWidth += ImGui.CalcTextSize(" ").X;
+        }
+    }
+
     private float cachedLineH   = 0f;
     private float cachedFontSz  = 0f;
 
@@ -192,7 +230,8 @@ public sealed class ChatEchoWindow : Window
 
         Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoScrollbar
               | ImGuiWindowFlags.NoScrollWithMouse | ImGuiWindowFlags.NoSavedSettings
-              | ImGuiWindowFlags.NoCollapse;
+              | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoFocusOnAppearing
+              | ImGuiWindowFlags.NoBringToFrontOnFocus;
 
         if (cfg.Locked)
         {
@@ -202,7 +241,6 @@ public sealed class ChatEchoWindow : Window
         }
         else
         {
-            Flags |= ImGuiWindowFlags.NoFocusOnAppearing;
             Size = new Vector2(Math.Max(380f, cfg.FontSize * 14f), Math.Max(90f, cfg.FontSize * 2.8f));
             SizeCondition = ImGuiCond.Always;
         }
@@ -291,30 +329,51 @@ public sealed class ChatEchoWindow : Window
         var def = key != null ? ChannelDefs.ByKey(key) : null;
         var ch  = key != null ? cfg.Get(key, def?.DefaultColor ?? new Vector4(1,1,1,1)) : null;
 
-        Vector4 nameColor, msgColor;
+        Vector4 nameColor, msgColor, nameColor2, msgColor2;
         switch (cfg.ColorMode)
         {
             case ColorMode.Solid:
                 nameColor = msgColor = cfg.SolidColor;
+                nameColor2 = msgColor2 = cfg.SolidColor;
+                break;
+            case ColorMode.Gradient:
+                if (IsGameLogEffect(msg.Type) || def?.HasSender != false)
+                {
+                    nameColor = ch?.NameColor ?? new Vector4(1,1,1,1);
+                    nameColor2 = ch?.NameColor2 ?? nameColor;
+                    msgColor = ch?.MsgColor ?? new Vector4(1,1,1,1);
+                    msgColor2 = ch?.MsgColor2 ?? msgColor;
+                }
+                else
+                {
+                    nameColor = msgColor = ch?.Color ?? new Vector4(1,1,1,1);
+                    nameColor2 = msgColor2 = ch?.MsgColor2 ?? msgColor;
+                }
                 break;
             case ColorMode.Split:
                 if (IsGameLogEffect(msg.Type))
                 {
                     nameColor = ch?.NameColor ?? new Vector4(1,1,1,1);
                     msgColor  = ch?.MsgColor ?? new Vector4(1,1,1,1);
+                    nameColor2 = nameColor;
+                    msgColor2 = msgColor;
                 }
                 else if (def?.HasSender == false)
                 {
                     nameColor = msgColor = ch?.Color ?? new Vector4(1,1,1,1);
+                    nameColor2 = msgColor2 = msgColor;
                 }
                 else
                 {
                     nameColor = ch?.NameColor ?? new Vector4(1,1,1,1);
                     msgColor  = ch?.MsgColor  ?? new Vector4(1,1,1,1);
+                    nameColor2 = nameColor;
+                    msgColor2 = msgColor;
                 }
                 break;
             default:
                 nameColor = msgColor = ch?.Color ?? new Vector4(1,1,1,1);
+                nameColor2 = msgColor2 = msgColor;
                 break;
         }
 
@@ -327,33 +386,97 @@ public sealed class ChatEchoWindow : Window
         float  sz      = cfg.FontSize;
         float  x       = scrPos.X, y = scrPos.Y;
 
+        var segments = new List<RenderSegment>();
         if (hasSender && !string.IsNullOrWhiteSpace(sender))
-            Seg(dl, font, sz, ref x, y, prefix + sender + ": ", nameColor, cfg, alpha);
+            segments.Add(new RenderSegment(prefix + sender + ": ", nameColor, cfg.ColorMode == ColorMode.Gradient ? nameColor2 : null));
         else if (!string.IsNullOrEmpty(prefix))
-            Seg(dl, font, sz, ref x, y, prefix, nameColor, cfg, alpha);
+            segments.Add(new RenderSegment(prefix, nameColor, cfg.ColorMode == ColorMode.Gradient ? nameColor2 : null));
 
         if (cfg.ColorMode == ColorMode.Split && IsGameLogEffect(msg.Type) && TrySplitGameLogEffect(msg.Text, out var beforeEffect, out var effectName, out var afterEffect))
         {
-            Seg(dl, font, sz, ref x, y, beforeEffect, msgColor, cfg, alpha);
-            Seg(dl, font, sz, ref x, y, effectName, nameColor, cfg, alpha);
-            Seg(dl, font, sz, ref x, y, afterEffect, msgColor, cfg, alpha);
+            segments.Add(new RenderSegment(beforeEffect, msgColor));
+            segments.Add(new RenderSegment(effectName, nameColor));
+            segments.Add(new RenderSegment(afterEffect, msgColor));
+        }
+        else if (cfg.ColorMode == ColorMode.Gradient && IsGameLogEffect(msg.Type) && TrySplitGameLogEffect(msg.Text, out beforeEffect, out effectName, out afterEffect))
+        {
+            segments.Add(new RenderSegment(beforeEffect, msgColor, msgColor2));
+            segments.Add(new RenderSegment(effectName, nameColor, nameColor2));
+            segments.Add(new RenderSegment(afterEffect, msgColor, msgColor2));
         }
         else if (cfg.EnablePriority && cfg.PriorityWords.Count > 0)
         {
             foreach (var (seg, isPri) in Tokenize(msg.Text, cfg.PriorityWords))
-                Seg(dl, font, sz, ref x, y, seg, isPri ? cfg.PriorityColor : msgColor, cfg, alpha);
+                segments.Add(new RenderSegment(seg, isPri ? cfg.PriorityColor : msgColor, isPri || cfg.ColorMode != ColorMode.Gradient ? null : msgColor2));
         }
         else
         {
-            Seg(dl, font, sz, ref x, y, msg.Text, msgColor, cfg, alpha);
+            segments.Add(new RenderSegment(msg.Text, msgColor, cfg.ColorMode == ColorMode.Gradient ? msgColor2 : null));
         }
+
+        var lineCount = DrawWrappedSegments(dl, font, sz, scrPos, segments, cfg, alpha, cfg.WrapWidth);
 
         if (Math.Abs(cachedFontSz - sz) > 0.01f)
         {
             cachedLineH  = ImGui.CalcTextSize("A").Y + 2f;
             cachedFontSz = sz;
         }
-        ImGui.Dummy(new Vector2(Math.Max(x - scrPos.X, 10f), cachedLineH));
+        ImGui.Dummy(new Vector2(Math.Max(cfg.WrapWidth, 10f), cachedLineH * lineCount));
+    }
+
+    private static int DrawWrappedSegments(ImDrawListPtr dl, ImFontPtr font, float sz, Vector2 start, List<RenderSegment> segments, Configuration cfg, float alpha, float wrapWidth)
+    {
+        var x = start.X;
+        var y = start.Y;
+        var lineStart = start.X;
+        var lineCount = 1;
+
+        foreach (var segment in segments)
+        {
+            var gradientWidth = Math.Max(ImGui.CalcTextSize(segment.Text).X, 1f);
+            var gradientDrawnWidth = 0f;
+            foreach (var token in SplitForWrap(segment.Text))
+            {
+                var tokenWidth = ImGui.CalcTextSize(token).X;
+                if (!string.IsNullOrWhiteSpace(token) && x > lineStart && x + tokenWidth - lineStart > wrapWidth)
+                {
+                    x = lineStart;
+                    y += ImGui.CalcTextSize("A").Y + 2f;
+                    lineCount++;
+                    if (string.IsNullOrWhiteSpace(token))
+                        continue;
+                }
+
+                if (segment.Color2 is { } endColor)
+                    SegGradientPart(dl, font, sz, ref x, y, token, segment.Color, endColor, cfg, alpha, gradientWidth, ref gradientDrawnWidth);
+                else
+                    Seg(dl, font, sz, ref x, y, token, segment.Color, cfg, alpha);
+            }
+        }
+
+        return lineCount;
+    }
+
+    private static IEnumerable<string> SplitForWrap(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            yield break;
+
+        var start = 0;
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (!char.IsWhiteSpace(text[i]))
+                continue;
+
+            if (i > start)
+                yield return text[start..i];
+
+            yield return text[i].ToString();
+            start = i + 1;
+        }
+
+        if (start < text.Length)
+            yield return text[start..];
     }
 
     private static bool IsGameLogEffect(XivChatType type)

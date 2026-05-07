@@ -21,9 +21,6 @@ public sealed class ChatMessage
     public bool IsExpired(float duration)
         => (DateTime.Now - AddedAt).TotalSeconds >= duration;
 
-    /// <summary>
-    /// Returns 0–1 alpha. Full opacity until the last 0.4 s, then fades to 0.
-    /// </summary>
     public float GetAlpha(float duration, float fadeDuration = 0.4f)
     {
         double remaining = duration - (DateTime.Now - AddedAt).TotalSeconds;
