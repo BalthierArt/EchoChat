@@ -6,10 +6,16 @@
 
 ---
 
+
 ## What it does
 
 It brings up chosen chat lines to upper screen so you dont miss callouts even with tunnel visioning or you just want you tells to pop up on your screen.
 
+---
+
+Also have a Flash card system that will pop up a small card with info on the current spell or mechanic or debuff to help you learn, you can then turn it off when no longer needing them.
+
+---
 ---
 
 ## Features
