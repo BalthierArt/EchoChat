@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
+using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 
 namespace ChatEcho.Windows;
@@ -14,24 +16,35 @@ public sealed class ConfigWindow : Window
     private string? headerHelpText;
     private string? nextHeaderHelpText;
     private string newPriorityWord = string.Empty;
-    private static readonly string[] Views = ["General", "Display", "Channels", "Debuff Helper", "Boss Helper", "Priority"];
-    private static readonly Vector2 NavBarSize = new(160, 0);
+    private static readonly (string Label, FontAwesomeIcon Icon)[] Views =
+    [
+        ("General", FontAwesomeIcon.Cog),
+        ("Display", FontAwesomeIcon.Desktop),
+        ("Channels", FontAwesomeIcon.Comments),
+        ("Debuff Helper", FontAwesomeIcon.Heartbeat),
+        ("Boss Helper", FontAwesomeIcon.ExclamationTriangle),
+        ("Priority", FontAwesomeIcon.Star),
+    ];
+    private static readonly Vector2 NavBarSize = new(190, 0);
     private static readonly Vector2 WindowPadding = new(10, 10);
     private static readonly Vector2 FramePadding = new(7, 5);
     private static readonly Vector2 ItemSpacing = new(9, 6);
     private static readonly Vector4 Primary = new(0.32f, 0.58f, 0.95f, 0.86f);
     private static readonly Vector4 PrimaryAccent = new(0.45f, 0.70f, 1f, 0.96f);
+    private static readonly Vector4 Warn = new(0.72f, 0.86f, 1f, 1f);
+    private static readonly Vector4 White = new(1f, 1f, 1f, 1f);
     private static readonly Vector4 TextMuted = new(0.62f, 0.66f, 0.72f, 1f);
     private static readonly uint Panel = ImGui.ColorConvertFloat4ToU32(new Vector4(0.1294f, 0.1333f, 0.1764f, 1f));
+    private static readonly uint PanelElevated = ImGui.ColorConvertFloat4ToU32(Primary);
     private static readonly uint Background = ImGui.ColorConvertFloat4ToU32(new Vector4(0.0431f, 0.0549f, 0.0588f, 0.95f));
 
-    private static readonly (int from, int to, string label)[] Sections =
+    private static readonly (int from, int to, string label, FontAwesomeIcon icon)[] Sections =
     {
-        (0,  2,  "Combat / Raid"),
-        (3,  9,  "Social"),
-        (10, 11, "Linkshells"),
-        (12, 15, "System"),
-        (16, 19, "Game Log"),
+        (0,  2,  "Combat / Raid", FontAwesomeIcon.ShieldAlt),
+        (3,  9,  "Social", FontAwesomeIcon.Users),
+        (10, 11, "Linkshells", FontAwesomeIcon.Link),
+        (12, 15, "System", FontAwesomeIcon.Server),
+        (16, 19, "Game Log", FontAwesomeIcon.ListAlt),
     };
 
     public ConfigWindow(Plugin plugin) : base("Chat Echo — Settings")
@@ -134,8 +147,8 @@ public sealed class ConfigWindow : Window
         if (!ImGui.BeginChild("###ChatEchoNav", NavBarSize, true, ImGuiWindowFlags.NoScrollbar))
             return;
 
-        ImGui.TextUnformatted("Chat Echo");
-        ImGui.TextColored(TextMuted, "Categories");
+        CenteredTitle(FontAwesomeIcon.CommentDots, "CHAT ECHO", 1.08f);
+        TextCentered("Categories", TextMuted);
         ImGui.Spacing();
 
         for (var i = 0; i < Views.Length; i++)
@@ -148,7 +161,7 @@ public sealed class ConfigWindow : Window
         ImGui.Separator();
         ImGui.Spacing();
 
-        if (ImGui.Button(cfgButtonLabel(), buttonSize))
+        if (NavButton((cfgButtonLabel(), plugin.Configuration.Enabled ? FontAwesomeIcon.Pause : FontAwesomeIcon.Play), false, buttonSize))
         {
             var cfg = plugin.Configuration;
             cfg.Enabled = !cfg.Enabled;
@@ -187,12 +200,12 @@ public sealed class ConfigWindow : Window
         }
     }
 
-    private void DrawPageHeader(string title, string defaultHelp)
+    private void DrawPageHeader((string Label, FontAwesomeIcon Icon) view, string defaultHelp)
     {
-        ContentBox($"Header{title}", Primary, true, () =>
+        ContentBox($"Header{view.Label}", PanelElevated, true, () =>
         {
-            CenteredTitle(title.ToUpperInvariant(), 1.35f);
-            TextCentered(GetHeaderHelp(defaultHelp), new Vector4(1f, 1f, 1f, 1f));
+            CenteredTitle(view.Icon, view.Label.ToUpperInvariant(), 1.35f);
+            TextCentered(GetHeaderHelp(defaultHelp), White);
         });
     }
 
@@ -265,6 +278,21 @@ public sealed class ConfigWindow : Window
         ImGui.SetWindowFontScale(1f);
     }
 
+    private static void CenteredTitle(FontAwesomeIcon icon, string text, float scale = 1f)
+    {
+        ImGui.SetWindowFontScale(scale);
+        var iconText = icon.ToIconString();
+        var iconSize = ImGui.CalcTextSize(iconText);
+        var textSize = ImGui.CalcTextSize(text);
+        var spacing = ImGui.GetStyle().ItemInnerSpacing.X;
+        ImGui.SetCursorPosX(Math.Max(ImGui.GetCursorPosX(), (ImGui.GetWindowWidth() - iconSize.X - spacing - textSize.X) * 0.5f));
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+            ImGui.TextColored(White, iconText);
+        ImGui.SameLine(0, spacing);
+        ImGui.TextColored(White, text);
+        ImGui.SetWindowFontScale(1f);
+    }
+
     private static void TextCentered(string text, Vector4 color)
     {
         var size = ImGui.CalcTextSize(text);
@@ -272,17 +300,36 @@ public sealed class ConfigWindow : Window
         ImGui.TextColored(color, text);
     }
 
-    private static bool NavButton(string label, bool selected, Vector2 size)
+    private static bool NavButton((string Label, FontAwesomeIcon Icon) view, bool selected, Vector2 size)
     {
         if (selected)
             ImGui.PushStyleColor(ImGuiCol.Button, Primary);
 
-        var clicked = ImGui.Button(label, size);
+        ImGui.SetCursorPosX(10f);
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+            ImGui.TextColored(selected ? White : TextMuted, view.Icon.ToIconString());
+        ImGui.SameLine();
+        var clicked = ImGui.Button($"{view.Label}##nav{view.Label}", new Vector2(size.X - 28f, size.Y));
 
         if (selected)
             ImGui.PopStyleColor();
 
         return clicked;
+    }
+
+    private static void SectionHeader(FontAwesomeIcon icon, string text)
+    {
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+            ImGui.TextColored(White, icon.ToIconString());
+        ImGui.SameLine();
+        ImGui.TextColored(Warn, text);
+    }
+
+    private static void InlineIcon(FontAwesomeIcon icon)
+    {
+        using (ImRaii.PushFont(UiBuilder.IconFont))
+            ImGui.TextColored(White, icon.ToIconString());
+        ImGui.SameLine();
     }
 
     private static void PushSettingsStyle()
@@ -294,6 +341,7 @@ public sealed class ConfigWindow : Window
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ItemSpacing);
         ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, WindowPadding);
         ImGui.PushStyleColor(ImGuiCol.Border, Panel);
+        ImGui.PushStyleColor(ImGuiCol.Button, ImGui.ColorConvertU32ToFloat4(Panel));
         ImGui.PushStyleColor(ImGuiCol.ButtonActive, Primary);
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, PrimaryAccent);
         ImGui.PushStyleColor(ImGuiCol.ChildBg, Panel);
@@ -302,7 +350,7 @@ public sealed class ConfigWindow : Window
 
     private static void PopSettingsStyle()
     {
-        ImGui.PopStyleColor(5);
+        ImGui.PopStyleColor(6);
         ImGui.PopStyleVar(6);
     }
 
@@ -311,30 +359,35 @@ public sealed class ConfigWindow : Window
         ImGui.Spacing();
 
         var dur = cfg.DisplayDuration;
+        InlineIcon(FontAwesomeIcon.Clock);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Display Duration (s)", ref dur, 0.5f, 15f, "%.1f s"))
         { cfg.DisplayDuration = dur; cfg.Save(); }
         SetHeaderHelpOnHover("How long a chat banner stays visible before it fades away.");
 
         var maxMsg = cfg.MaxMessages;
+        InlineIcon(FontAwesomeIcon.ListAlt);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderInt("Max Messages", ref maxMsg, 1, 10))
         { cfg.MaxMessages = maxMsg; cfg.Save(); }
         SetHeaderHelpOnHover("How many chat messages can be shown on screen at the same time.");
 
         var fs = cfg.FontSize;
+        InlineIcon(FontAwesomeIcon.Font);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Font Size", ref fs, 10f, 72f, "%.0f px"))
         { cfg.FontSize = fs; cfg.Save(); }
         SetHeaderHelpOnHover("Makes the main chat banner text bigger or smaller.");
 
         var wrapWidth = cfg.WrapWidth;
+        InlineIcon(FontAwesomeIcon.AlignLeft);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Text wrap width", ref wrapWidth, 250f, 1200f, "%.0f px"))
         { cfg.WrapWidth = wrapWidth; cfg.Save(); }
         SetHeaderHelpOnHover("Controls when long chat messages wrap onto the next line.");
 
         var showLast = cfg.ShowLastFaded;
+        InlineIcon(FontAwesomeIcon.Eye);
         if (ImGui.Checkbox("Show last message faded after expiry", ref showLast))
         { cfg.ShowLastFaded = showLast; cfg.Save(); }
         SetHeaderHelpOnHover("Keeps the last message faintly visible so you can glance back at it.");
@@ -342,17 +395,20 @@ public sealed class ConfigWindow : Window
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
 
         var locked = cfg.Locked;
+        InlineIcon(FontAwesomeIcon.Lock);
         if (ImGui.Checkbox("Lock banner position (click-through)", ref locked))
         { cfg.Locked = locked; cfg.Save(); }
         SetHeaderHelpOnHover("Locked means clicks pass through the banner. Unlock it when you want to drag it somewhere else.");
 
         ImGui.Spacing();
+        InlineIcon(FontAwesomeIcon.MapMarker);
         ImGui.TextDisabled($"Banner position: ({cfg.BannerPosition.X:F0}, {cfg.BannerPosition.Y:F0})");
         if (ImGui.SmallButton("Reset to centre")) { cfg.BannerPosition = new Vector2(600, 400); cfg.Save(); }
         SetHeaderHelpOnHover("Moves the chat banner back near the middle of the screen.");
 
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
 
+        InlineIcon(FontAwesomeIcon.Play);
         if (ImGui.Button("Run Test Messages"))
             plugin.RunTestMessages();
         SetHeaderHelpOnHover("Shows sample messages so you can preview the banner without waiting for chat.");
@@ -369,18 +425,20 @@ public sealed class ConfigWindow : Window
         ImGui.Spacing();
 
         var opacity = cfg.BackgroundOpacity;
+        InlineIcon(FontAwesomeIcon.Adjust);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Background Opacity", ref opacity, 0f, 1f, "%.2f"))
         { cfg.BackgroundOpacity = opacity; cfg.Save(); }
         SetHeaderHelpOnHover("Changes how dark the chat banner background is.");
 
         var padding = cfg.BackgroundPadding;
+        InlineIcon(FontAwesomeIcon.Expand);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Background Padding", ref padding, 0f, 20f, "%.0f px"))
         { cfg.BackgroundPadding = padding; cfg.Save(); }
         SetHeaderHelpOnHover("Adds space around the text inside the chat banner.");
 
-        ImGui.Spacing(); ImGui.Separator(); ImGui.Text("Text Effect"); ImGui.Spacing();
+        ImGui.Spacing(); ImGui.Separator(); SectionHeader(FontAwesomeIcon.Magic, "Text Effect"); ImGui.Spacing();
 
         int eff = (int)cfg.TextEffect;
         bool ec = ImGui.RadioButton("None",    ref eff, 0); ImGui.SameLine();
@@ -406,7 +464,7 @@ public sealed class ConfigWindow : Window
             SetHeaderHelpOnHover("Reset the outline color.");
         }
 
-        ImGui.Spacing(); ImGui.Separator(); ImGui.Text("Name Format"); ImGui.Spacing();
+        ImGui.Spacing(); ImGui.Separator(); SectionHeader(FontAwesomeIcon.IdCard, "Name Format"); ImGui.Spacing();
 
         var pref = cfg.ShowChannelPrefix;
         if (ImGui.Checkbox("Show channel prefix  e.g. (Party)", ref pref))
@@ -424,7 +482,7 @@ public sealed class ConfigWindow : Window
     {
         ImGui.Spacing();
 
-        ImGui.Text("Color Mode:");
+        SectionHeader(FontAwesomeIcon.PaintBrush, "Color Mode:");
         ImGui.SameLine();
         int cm = (int)cfg.ColorMode;
         bool cmc = ImGui.RadioButton("Per-channel##cm", ref cm, 0);
@@ -463,9 +521,9 @@ public sealed class ConfigWindow : Window
         ImGui.Separator();
         ImGui.Spacing();
 
-        foreach (var (from, to, label) in Sections)
+        foreach (var (from, to, label, icon) in Sections)
         {
-            ImGui.Text(label);
+            SectionHeader(icon, label);
             for (int i = from; i <= to && i < ChannelDefs.All.Length; i++)
             {
                 var def = ChannelDefs.All[i];
@@ -559,7 +617,7 @@ public sealed class ConfigWindow : Window
 
             if (label == "Game Log")
             {
-                ImGui.Text("Effects:");
+                SectionHeader(FontAwesomeIcon.Heartbeat, "Effects:");
                 ImGui.SameLine();
                 int ges = (int)cfg.GameLogEffectScope;
                 bool gesc = ImGui.RadioButton("Only me##ges", ref ges, 0);
@@ -585,15 +643,21 @@ public sealed class ConfigWindow : Window
         ImGui.TextDisabled("Debuff Helper is an ongoing feature and will be improved over time.");
         ImGui.Spacing();
 
+        SectionHeader(FontAwesomeIcon.PowerOff, "Window");
+        ImGui.Spacing();
+
         var enabled = cfg.DebuffHelperEnabled;
+        InlineIcon(FontAwesomeIcon.ToggleOn);
         if (ImGui.Checkbox("Enable Debuff Helper", ref enabled)) { cfg.DebuffHelperEnabled = enabled; cfg.Save(); }
         SetHeaderHelpOnHover("Shows a separate helper window for important debuffs on you.");
         ImGui.SameLine();
         var locked = cfg.DebuffHelperLocked;
+        InlineIcon(FontAwesomeIcon.Lock);
         if (ImGui.Checkbox("Lock helper window", ref locked)) { cfg.DebuffHelperLocked = locked; cfg.Save(); }
         SetHeaderHelpOnHover("Locked means clicks pass through the Debuff Helper. Unlock it to drag the window.");
 
         ImGui.Spacing();
+        InlineIcon(FontAwesomeIcon.MapMarker);
         ImGui.TextDisabled($"Position: ({cfg.DebuffHelperPosition.X:F0}, {cfg.DebuffHelperPosition.Y:F0})");
         ImGui.SameLine();
         if (ImGui.SmallButton("Reset##dhpos")) { cfg.DebuffHelperPosition = new Vector2(720, 520); cfg.Save(); }
@@ -606,25 +670,32 @@ public sealed class ConfigWindow : Window
         ImGui.Separator();
         ImGui.Spacing();
 
+        SectionHeader(FontAwesomeIcon.Eye, "Visible Parts");
+        ImGui.Spacing();
+
         var showIcon = cfg.DebuffHelperShowIcon;
+        InlineIcon(FontAwesomeIcon.Image);
         if (ImGui.Checkbox("Icon", ref showIcon)) { cfg.DebuffHelperShowIcon = showIcon; cfg.Save(); }
         SetHeaderHelpOnHover("Shows the debuff icon next to the debuff name.");
         ImGui.SameLine();
         var showTime = cfg.DebuffHelperShowTime;
+        InlineIcon(FontAwesomeIcon.Clock);
         if (ImGui.Checkbox("Time left", ref showTime)) { cfg.DebuffHelperShowTime = showTime; cfg.Save(); }
         SetHeaderHelpOnHover("Shows how long the debuff has left.");
         ImGui.SameLine();
         var showDetails = cfg.DebuffHelperShowDetails;
+        InlineIcon(FontAwesomeIcon.InfoCircle);
         if (ImGui.Checkbox("Debuff details", ref showDetails)) { cfg.DebuffHelperShowDetails = showDetails; cfg.Save(); }
         SetHeaderHelpOnHover("Shows the game's description for the debuff when available.");
         ImGui.SameLine();
         var showAdvice = cfg.DebuffHelperShowAdvice;
+        InlineIcon(FontAwesomeIcon.Lightbulb);
         if (ImGui.Checkbox("Advice text", ref showAdvice)) { cfg.DebuffHelperShowAdvice = showAdvice; cfg.Save(); }
         SetHeaderHelpOnHover("Shows the short helper advice line under the debuff.");
 
         ImGui.Spacing();
 
-        ImGui.Text("Growth direction:");
+        SectionHeader(FontAwesomeIcon.Route, "Growth direction:");
         ImGui.SameLine();
         var direction = (int)cfg.DebuffHelperGrowthDirection;
         var directionChanged = ImGui.RadioButton("Down##dhdir", ref direction, 0);
@@ -637,32 +708,42 @@ public sealed class ConfigWindow : Window
         if (directionChanged) { cfg.DebuffHelperGrowthDirection = (DebuffHelperGrowthDirection)direction; cfg.Save(); }
 
         var itemsPerRow = cfg.DebuffHelperItemsPerRow;
+        InlineIcon(FontAwesomeIcon.ThLarge);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderInt("Items per row", ref itemsPerRow, 1, 6)) { cfg.DebuffHelperItemsPerRow = itemsPerRow; cfg.Save(); }
 
         ImGui.Spacing();
+        SectionHeader(FontAwesomeIcon.SlidersH, "Sizing and Background");
+        ImGui.Spacing();
 
         var iconSize = cfg.DebuffHelperIconSize;
+        InlineIcon(FontAwesomeIcon.Image);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Icon size", ref iconSize, 16f, 80f, "%.0f px")) { cfg.DebuffHelperIconSize = iconSize; cfg.Save(); }
 
         var wrapWidth = cfg.DebuffHelperWrapWidth;
+        InlineIcon(FontAwesomeIcon.AlignLeft);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Text wrap width##dhwrap", ref wrapWidth, 220f, 900f, "%.0f px")) { cfg.DebuffHelperWrapWidth = wrapWidth; cfg.Save(); }
 
         var bgOpacity = cfg.DebuffHelperBackgroundOpacity;
+        InlineIcon(FontAwesomeIcon.Adjust);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Window background opacity", ref bgOpacity, 0f, 1f, "%.2f")) { cfg.DebuffHelperBackgroundOpacity = bgOpacity; cfg.Save(); }
 
         var bgPadding = cfg.DebuffHelperBackgroundPadding;
+        InlineIcon(FontAwesomeIcon.Expand);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Window padding", ref bgPadding, 0f, 24f, "%.0f px")) { cfg.DebuffHelperBackgroundPadding = bgPadding; cfg.Save(); }
 
         var debuffSpacing = cfg.DebuffHelperDebuffSpacing;
+        InlineIcon(FontAwesomeIcon.Bars);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Debuff spacing", ref debuffSpacing, 0f, 32f, "%.0f px")) { cfg.DebuffHelperDebuffSpacing = debuffSpacing; cfg.Save(); }
 
         ImGui.Separator();
+        ImGui.Spacing();
+        SectionHeader(FontAwesomeIcon.Font, "Text Styling");
         ImGui.Spacing();
 
         DrawDebuffTextControls(
@@ -723,14 +804,17 @@ public sealed class ConfigWindow : Window
         Action<Vector4> setEffectColor,
         Configuration cfg)
     {
-        ImGui.Text(label);
+        SectionHeader(label.Contains("Name", StringComparison.OrdinalIgnoreCase) ? FontAwesomeIcon.IdCard : label.Contains("Detail", StringComparison.OrdinalIgnoreCase) ? FontAwesomeIcon.InfoCircle : FontAwesomeIcon.Lightbulb, label);
+        InlineIcon(FontAwesomeIcon.Font);
         ImGui.SetNextItemWidth(170f);
         var fs = fontSize;
         if (ImGui.SliderFloat($"Font##{label}", ref fs, 10f, 48f, "%.0f px")) { setFontSize(fs); cfg.Save(); }
 
+        InlineIcon(FontAwesomeIcon.PaintBrush);
         if (CE4($"##{label}text", textColor, out var tc)) { setTextColor(tc); cfg.Save(); }
 
         var eff = (int)effect;
+        InlineIcon(FontAwesomeIcon.Magic);
         bool changed = ImGui.RadioButton($"None##{label}eff", ref eff, 0);
         ImGui.SameLine();
         changed |= ImGui.RadioButton($"Shadow##{label}eff", ref eff, 1);
@@ -738,6 +822,7 @@ public sealed class ConfigWindow : Window
         changed |= ImGui.RadioButton($"Outline##{label}eff", ref eff, 2);
         if (changed) { setEffect((TextEffect)eff); cfg.Save(); }
 
+        InlineIcon(FontAwesomeIcon.Tint);
         ImGui.TextDisabled("Effect color");
         ImGui.SameLine();
         if (CE4($"##{label}effcol", effectColor, out var ec)) { setEffectColor(ec); cfg.Save(); }
@@ -754,15 +839,21 @@ public sealed class ConfigWindow : Window
         ImGui.TextDisabled("It checks your target, focus target, and nearby enemies for supported boss casts.");
         ImGui.Spacing();
 
+        SectionHeader(FontAwesomeIcon.PowerOff, "Window");
+        ImGui.Spacing();
+
         var enabled = cfg.CastHelperEnabled;
+        InlineIcon(FontAwesomeIcon.ToggleOn);
         if (ImGui.Checkbox("Enable Boss Helper", ref enabled)) { cfg.CastHelperEnabled = enabled; cfg.Save(); }
         SetHeaderHelpOnHover("Shows a separate helper window when supported bosses start important casts.");
         ImGui.SameLine();
         var locked = cfg.CastHelperLocked;
+        InlineIcon(FontAwesomeIcon.Lock);
         if (ImGui.Checkbox("Lock helper window##cast", ref locked)) { cfg.CastHelperLocked = locked; cfg.Save(); }
         SetHeaderHelpOnHover("Locked means clicks pass through the Boss Helper. Unlock it to drag the window.");
 
         ImGui.Spacing();
+        InlineIcon(FontAwesomeIcon.MapMarker);
         ImGui.TextDisabled($"Position: ({cfg.CastHelperPosition.X:F0}, {cfg.CastHelperPosition.Y:F0})");
         ImGui.SameLine();
         if (ImGui.SmallButton("Reset##chpos")) { cfg.CastHelperPosition = new Vector2(760, 420); cfg.Save(); }
@@ -775,49 +866,66 @@ public sealed class ConfigWindow : Window
         ImGui.Separator();
         ImGui.Spacing();
 
+        SectionHeader(FontAwesomeIcon.Eye, "Visible Parts");
+        ImGui.Spacing();
+
         var showIcon = cfg.CastHelperShowIcon;
+        InlineIcon(FontAwesomeIcon.Image);
         if (ImGui.Checkbox("Icon##cast", ref showIcon)) { cfg.CastHelperShowIcon = showIcon; cfg.Save(); }
         SetHeaderHelpOnHover("Shows the action icon next to the cast name.");
         ImGui.SameLine();
         var showTime = cfg.CastHelperShowTime;
+        InlineIcon(FontAwesomeIcon.Clock);
         if (ImGui.Checkbox("Time left##cast", ref showTime)) { cfg.CastHelperShowTime = showTime; cfg.Save(); }
         SetHeaderHelpOnHover("Shows the countdown left on the boss cast.");
         ImGui.SameLine();
         var showDetails = cfg.CastHelperShowDetails;
+        InlineIcon(FontAwesomeIcon.InfoCircle);
         if (ImGui.Checkbox("Cast details", ref showDetails)) { cfg.CastHelperShowDetails = showDetails; cfg.Save(); }
         SetHeaderHelpOnHover("Shows the short line describing what the boss is casting.");
         ImGui.SameLine();
         var showAdvice = cfg.CastHelperShowAdvice;
+        InlineIcon(FontAwesomeIcon.Lightbulb);
         if (ImGui.Checkbox("Advice text##cast", ref showAdvice)) { cfg.CastHelperShowAdvice = showAdvice; cfg.Save(); }
         SetHeaderHelpOnHover("Shows the mechanic advice line under the cast.");
 
         var keepLast = cfg.CastHelperKeepLastUntilNextCast;
+        InlineIcon(FontAwesomeIcon.History);
         if (ImGui.Checkbox("Keep last alert until next cast", ref keepLast)) { cfg.CastHelperKeepLastUntilNextCast = keepLast; cfg.Save(); }
         SetHeaderHelpOnHover("Keeps the last boss alert visible longer so you have time to read it.");
 
         ImGui.Spacing();
+        SectionHeader(FontAwesomeIcon.SlidersH, "Sizing and Background");
+        ImGui.Spacing();
 
         var iconSize = cfg.CastHelperIconSize;
+        InlineIcon(FontAwesomeIcon.Image);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Icon size##cast", ref iconSize, 16f, 80f, "%.0f px")) { cfg.CastHelperIconSize = iconSize; cfg.Save(); }
 
         var wrapWidth = cfg.CastHelperWrapWidth;
+        InlineIcon(FontAwesomeIcon.AlignLeft);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Text wrap width##chwrap", ref wrapWidth, 220f, 900f, "%.0f px")) { cfg.CastHelperWrapWidth = wrapWidth; cfg.Save(); }
 
         var bgOpacity = cfg.CastHelperBackgroundOpacity;
+        InlineIcon(FontAwesomeIcon.Adjust);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Window background opacity##cast", ref bgOpacity, 0f, 1f, "%.2f")) { cfg.CastHelperBackgroundOpacity = bgOpacity; cfg.Save(); }
 
         var bgPadding = cfg.CastHelperBackgroundPadding;
+        InlineIcon(FontAwesomeIcon.Expand);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Window padding##cast", ref bgPadding, 0f, 24f, "%.0f px")) { cfg.CastHelperBackgroundPadding = bgPadding; cfg.Save(); }
 
         var castSpacing = cfg.CastHelperCastSpacing;
+        InlineIcon(FontAwesomeIcon.Bars);
         ImGui.SetNextItemWidth(220f);
         if (ImGui.SliderFloat("Cast spacing", ref castSpacing, 0f, 32f, "%.0f px")) { cfg.CastHelperCastSpacing = castSpacing; cfg.Save(); }
 
         ImGui.Separator();
+        ImGui.Spacing();
+        SectionHeader(FontAwesomeIcon.Font, "Text Styling");
         ImGui.Spacing();
 
         DrawDebuffTextControls(
@@ -862,6 +970,7 @@ public sealed class ConfigWindow : Window
             v => cfg.CastHelperAdviceEffectColor = v,
             cfg);
 
+        SectionHeader(FontAwesomeIcon.PaintBrush, "Important Colors");
         ImGui.TextDisabled("Important text color");
         ImGui.SameLine();
         if (CE4("##chimportant", cfg.CastHelperImportantColor, out var important)) { cfg.CastHelperImportantColor = important; cfg.Save(); }
@@ -881,7 +990,11 @@ public sealed class ConfigWindow : Window
         NormalizePriorityWords(cfg);
         ImGui.Spacing();
 
+        SectionHeader(FontAwesomeIcon.Star, "Priority Matching");
+        ImGui.Spacing();
+
         var en = cfg.EnablePriority;
+        InlineIcon(FontAwesomeIcon.ToggleOn);
         if (ImGui.Checkbox("Enable priority highlighting", ref en)) { cfg.EnablePriority = en; cfg.Save(); }
         SetHeaderHelpOnHover("Highlights important words like stack, spread, or tank swap when they appear in chat.");
 
@@ -898,6 +1011,7 @@ public sealed class ConfigWindow : Window
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
 
         var po = cfg.PriorityOnly;
+        InlineIcon(FontAwesomeIcon.Filter);
         if (ImGui.Checkbox("Priority Only Messages", ref po)) { cfg.PriorityOnly = po; cfg.Save(); }
         SetHeaderHelpOnHover("Only shows chat messages that include one of your priority words.");
 
@@ -910,6 +1024,9 @@ public sealed class ConfigWindow : Window
         ImGui.PopStyleColor();
 
         ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing();
+
+        SectionHeader(FontAwesomeIcon.Plus, "Words and Phrases");
+        ImGui.Spacing();
 
         ImGui.TextDisabled("Add a word or phrase and click Add.");
         ImGui.TextDisabled("Matching is case-insensitive, whole-word only.");
